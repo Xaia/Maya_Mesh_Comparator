@@ -1,4 +1,5 @@
 import maya.cmds as cmds
+import json
 from PySide2 import QtWidgets, QtCore, QtGui
 
 class MeshComparatorUI(QtWidgets.QDialog):
@@ -7,6 +8,8 @@ class MeshComparatorUI(QtWidgets.QDialog):
         self.setWindowTitle("Mesh Comparator")
         self.setMinimumSize(800, 600)
         self.selected_objects = []
+        self.transform_diffs = []
+        self.shape_diffs = []
         self.create_widgets()
         self.create_layout()
         self.create_connections()
@@ -14,6 +17,7 @@ class MeshComparatorUI(QtWidgets.QDialog):
     def create_widgets(self):
         self.title_label = QtWidgets.QLabel("Select two meshes and click Compare")
         self.compare_btn = QtWidgets.QPushButton("Compare")
+        self.save_btn = QtWidgets.QPushButton("Save Report")
         self.objects_label = QtWidgets.QLabel("Selected Objects:")
         self.object1_label = QtWidgets.QLabel("None")
         self.object2_label = QtWidgets.QLabel("None")
@@ -39,7 +43,11 @@ class MeshComparatorUI(QtWidgets.QDialog):
         main_layout.addLayout(object_layout)
         
         main_layout.addWidget(self.tab_widget)
-        main_layout.addWidget(self.compare_btn)
+        
+        button_layout = QtWidgets.QHBoxLayout()
+        button_layout.addWidget(self.compare_btn)
+        button_layout.addWidget(self.save_btn)
+        main_layout.addLayout(button_layout)
 
     def create_transform_tab(self):
         layout = QtWidgets.QVBoxLayout(self.transform_tab)
@@ -59,13 +67,14 @@ class MeshComparatorUI(QtWidgets.QDialog):
 
     def create_connections(self):
         self.compare_btn.clicked.connect(self.compare_meshes)
+        self.save_btn.clicked.connect(self.save_report)
 
     def get_attributes(self, node):
         attributes = {}
         if not cmds.objExists(node):
             return attributes
             
-        for attr in cmds.listAttr(node, scalar=True, visible=True):  # Removed 'readable' flag
+        for attr in cmds.listAttr(node, scalar=True, visible=True):
             try:
                 if cmds.getAttr(f"{node}.{attr}", settable=True):
                     value = cmds.getAttr(f"{node}.{attr}")
@@ -106,6 +115,51 @@ class MeshComparatorUI(QtWidgets.QDialog):
                 item_val1.setBackground(QtGui.QColor(255, 150, 150))
                 item_val2.setBackground(QtGui.QColor(255, 150, 150))
 
+    def get_report_data(self):
+        return {
+            "objects": {
+                "object1": self.object1_label.text(),
+                "object2": self.object2_label.text()
+            },
+            "transform_attributes": self.transform_diffs,
+            "shape_attributes": self.shape_diffs
+        }
+
+    def save_report(self):
+        if not self.transform_diffs and not self.shape_diffs:
+            cmds.warning("No comparison data to save. Perform a comparison first.")
+            return
+
+        file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save Report", "", "JSON Files (*.json);;Text Files (*.txt)"
+        )
+
+        if not file_path:
+            return
+
+        report_data = self.get_report_data()
+        
+        try:
+            if file_path.endswith('.json'):
+                with open(file_path, 'w') as f:
+                    json.dump(report_data, f, indent=4)
+            else:
+                with open(file_path, 'w') as f:
+                    f.write(f"Comparison Report between {report_data['objects']['object1']} and {report_data['objects']['object2']}\n\n")
+                    
+                    f.write("=== Transform Attributes ===\n")
+                    for attr in report_data['transform_attributes']:
+                        f.write(f"{attr[0]}:\n  {report_data['objects']['object1']}: {attr[1]}\n  {report_data['objects']['object2']}: {attr[2]}\n\n")
+                    
+                    f.write("\n=== Shape Attributes ===\n")
+                    for attr in report_data['shape_attributes']:
+                        f.write(f"{attr[0]}:\n  {report_data['objects']['object1']}: {attr[1]}\n  {report_data['objects']['object2']}: {attr[2]}\n\n")
+            
+            cmds.confirmDialog(title="Save Successful", message=f"Report saved to:\n{file_path}")
+        except Exception as e:
+            cmds.warning(f"Error saving file: {str(e)}")
+            cmds.confirmDialog(title="Save Error", message=f"Failed to save file:\n{str(e)}", button=["OK"])
+
     def compare_meshes(self):
         self.selected_objects = cmds.ls(selection=True, type="transform")
         
@@ -121,12 +175,12 @@ class MeshComparatorUI(QtWidgets.QDialog):
         shape2 = cmds.listRelatives(self.selected_objects[1], shapes=True)[0]
         
         # Compare transform attributes
-        transform_diffs = self.compare_attributes(self.selected_objects[0], self.selected_objects[1])
-        self.populate_table(self.transform_table, transform_diffs)
+        self.transform_diffs = self.compare_attributes(self.selected_objects[0], self.selected_objects[1])
+        self.populate_table(self.transform_table, self.transform_diffs)
         
         # Compare shape attributes
-        shape_diffs = self.compare_attributes(shape1, shape2)
-        self.populate_table(self.shape_table, shape_diffs)
+        self.shape_diffs = self.compare_attributes(shape1, shape2)
+        self.populate_table(self.shape_table, self.shape_diffs)
 
 def show_ui():
     global ui
